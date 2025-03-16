@@ -3,18 +3,31 @@
 namespace App\Services\RabbitMQ;
 
 use Illuminate\Support\Arr;
-use PhpAmqpLib\Connection\AMQPStreamConnection;
+use Illuminate\Support\Str;
+use PhpAmqpLib\Wire\AMQPTable;
 use PhpAmqpLib\Message\AMQPMessage;
+use PhpAmqpLib\Connection\AMQPStreamConnection;
 
 class RabbitmqService
 {
     protected $connection;
     protected $channel;
     protected $queue;
-    protected $exchane;
-    protected $routingKey = 'my_routing_key';
+    protected $exchange;
+    protected $routingKey;
+    protected $messageData;
 
-    public function __construct() {}
+    protected $deliveryTag;
+
+    public function __construct()
+    {
+        $this->routingKey = $this->generateRoutingKey();
+    }
+
+    protected function generateRoutingKey(): string
+    {
+        return 'route_' . Str::uuid();
+    }
 
     protected function connection()
     {
@@ -31,69 +44,35 @@ class RabbitmqService
         $this->channel = $this->connection->channel();
     }
 
-    protected function generateQueue()
+    protected function generateQueue(string $queue = '')
     {
-        $this->queue = env('RABBITMQ_QUEUE', 'default');
+        $this->queue = $queue ?? env('RABBITMQ_QUEUE', 'default');
         return $this->channel->queue_declare($this->queue, false, true, false, false);
     }
 
-    protected function generateExchange(string $exchangeType = 'direct')
+    protected function generateExchange(string $exchange = '', string $exchangeType = 'direct')
     {
-        $this->exchane = env('RABBITMQ_EXCHANGE', 'default_exchange');
-        $this->channel->exchange_declare($this->exchane, $exchangeType);
+        $this->exchange = $exchange ?? env('RABBITMQ_EXCHANGE', 'default_exchange');
+        $this->channel->exchange_declare($this->exchange, $exchangeType);
     }
 
     protected function bindQueue()
     {
-        $this->channel->queue_bind($this->queue, $this->exchane, $this->routingKey);
+        $this->channel->queue_bind($this->queue, $this->exchange, $this->routingKey);
     }
 
     protected function msg(array $data)
     {
-        return new AMQPMessage(json_encode($data), ['delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT]);
-    }
-
-    public function publish(array $data)
-    {
-        $this->connection();
-        $this->channel();
-        $this->generateExchange();
-        $this->generateQueue();
-        $this->bindQueue();
-        $this->channel->basic_publish($this->msg($data), $this->exchane, $this->routingKey);
-        $this->connectionClose();
-    }
-
-    public function consume($callback)
-    {
-        $this->connection();
-        $this->channel();
-        $this->generateQueue();
-        $this->channel->basic_consume($this->queue, '', false, true, false, false, $callback);
-
-        while ($this->channel->is_consuming()) {
-            $this->channel->wait();
-        }
-        $this->connectionClose();
-    }
-
-    public function consumeGet()
-    {
-        $this->connection();
-        $this->channel();
-        $this->generateQueue();
-        while (true) {
-            $msg = $this->channel->basic_get($this->queue);
-            if ($msg) {
-                $data = json_decode($msg->getBody(), true);
-                $msg->ack();
-                return $data;
-            } else {
-                echo "No messages in the queue.\n";
-                break;
-            }
-        }
-        $this->connectionClose();
+        $data['routing_key'] = $this->routingKey;
+        $properties = [
+            'content_type' => 'application/json',
+            'delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT,
+            'application_headers' => new AMQPTable([
+                'custom_delivery_tag' => uniqid(),
+                'routing_key' => $this->routingKey,
+            ])
+        ];
+        return new AMQPMessage(json_encode($data), $properties);
     }
 
     protected function connectionClose()
