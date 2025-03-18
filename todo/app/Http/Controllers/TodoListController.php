@@ -3,17 +3,18 @@
 namespace App\Http\Controllers;
 
 use App\Models\TodoList;
+use App\Services\RabbitMQ\ConsumerService;
+use App\Services\RabbitMQ\PublisherService;
 use Illuminate\Http\Request;
-use PhpAmqpLib\Message\AMQPMessage;
 use Illuminate\Support\Facades\Auth;
-use App\Services\RabbitMQ\RabbitmqService;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class TodoListController extends Controller
 {
     public function __construct(
-        protected RabbitmqService $rabbitmqService,
+        protected PublisherService $publisherService,
+        protected ConsumerService $consumerService
     ) {}
 
     public function index()
@@ -41,25 +42,27 @@ class TodoListController extends Controller
             'todo'  => $request->todo,
         ]);
 
-        $this->rabbitmqService->publish([
+        $this->publisherService->publish([
             'data'  => "hi " . Auth::user()->name . " this is a new todo" . $request->todo,
             'user' => [
                 'id' => Auth::user()->id,
                 'name' => Auth::user()->name,
                 'email' => Auth::user()->email
             ]
-        ]);
+        ], 'todo_created_queue', 'todo_created_exchange');
+
+        $dataResponse = $this->consumerService->consume('todo_created_queue_success');
 
         return response()->json([
-            'message' => "Todo successfully created!"
+            'message' => $dataResponse
         ], Response::HTTP_OK);
     }
 
     public function showQueue()
     {
-        $data = $this->rabbitmqService->consumeGet();
-        return response()->json([
-            'data' => $data,
-        ]);
+        // $data = $this->rabbitmqService->consumeGet();
+        // return response()->json([
+        //     'data' => $data,
+        // ]);
     }
 }

@@ -3,6 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Mail\Rabbitmq\TodoMail;
+use App\Services\RabbitMQ\ConsumerService;
+use App\Services\RabbitMQ\PublisherService;
 use App\Services\RabbitMQ\RabbitmqService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Mail;
@@ -26,11 +28,10 @@ class MailConsumer extends Command
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(ConsumerService $consumer, PublisherService $publisher)
     {
-        $consumer = new RabbitmqService();
         $this->info("wait for data.....");
-        $data = $consumer->consume();
+        $data = $consumer->consume('todo_created_queue');
         if (!$data) {
             $this->error("No data avaliabe");
             return false;
@@ -38,6 +39,10 @@ class MailConsumer extends Command
         $todo = $data['data'];
         $name = $data['user']['name'];
         Mail::to('email@test.com')->send(new TodoMail($name, $todo));
+        $publisher->publish([
+            'message' => 'mail send successfully',
+            'email' => 'email@test.com',
+        ], 'todo_created_queue_success', 'todo_created_exchange');
         $this->info('mail send successfully!');
     }
 }
